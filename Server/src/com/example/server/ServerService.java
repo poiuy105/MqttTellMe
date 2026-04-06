@@ -549,9 +549,11 @@ public class ServerService extends Service {
                 
                 HttpRequestInfo requestInfo = parseHttpRequest(is);
                 
-                String result = null;
+                final String result;
                 if (requestInfo.isPost && requestInfo.contentLength > 0) {
                     result = readPostPayload(is, requestInfo.contentLength);
+                } else {
+                    result = null;
                 }
                 
                 sendHttpResponse(os);

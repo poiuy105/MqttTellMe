@@ -148,7 +148,7 @@ public class FloatingWindowService extends Service {
             DisplayMetrics displayMetrics = new DisplayMetrics();
             if (windowManager != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    android.util.WindowMetrics windowMetrics = windowManager.getCurrentWindowMetrics();
+                    android.view.WindowMetrics windowMetrics = windowManager.getCurrentWindowMetrics();
                     return windowMetrics.getBounds().width() / 3;
                 } else {
                     windowManager.getDefaultDisplay().getMetrics(displayMetrics);
