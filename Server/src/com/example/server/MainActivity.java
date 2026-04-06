@@ -42,6 +42,7 @@ import android.widget.Toast;
 
 public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
+    private static final int REQUEST_CODE_OVERLAY_PERMISSION = 1001;
     
     private TextView tvClientMsg;
     private EditText tvServerPort;
@@ -61,6 +62,8 @@ public class MainActivity extends Activity {
     
     private BroadcastReceiver mqttReceiver;
     private MqttConfig mqttConfig;
+    
+    private boolean isWaitingForPermission = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,61 +72,107 @@ public class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences("ServerPrefs", MODE_PRIVATE);
         int startCount = prefs.getInt("startCount", 0);
         
-        if (startCount == 0) {
-            checkFloatingWindowPermission();
-        }
+        Log.d(TAG, "onCreate: startCount=" + startCount);
         
         if (startCount == 0) {
-            setContentView(R.layout.activity_main);
-            initViews();
-            loadMqttConfig();
-            setupMqttReceiver();
-            
-            String detectedIp = getDeviceIpAddress();
-            tvServerIP.setText(detectedIp);
-            tvServerPort.setText("1234");
-            
-            setupPortConfirmButton();
-            setupMqttConnectButton();
-            setupClearButton();
-        } else {
-            Log.d(TAG, "Not first start, finishing activity");
-            Intent serviceIntent = new Intent(this, ServerService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent);
-            } else {
-                startService(serviceIntent);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                isWaitingForPermission = true;
+                requestOverlayPermission();
+                return;
             }
+            
+            initializeFirstRun();
+        } else {
+            Log.d(TAG, "Not first start, starting service and finishing activity");
+            startServerService();
             finish();
-            return;
         }
+    }
+    
+    private void requestOverlayPermission() {
+        Log.d(TAG, "Requesting overlay permission");
+        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:" + getPackageName()));
+        startActivityForResult(intent, REQUEST_CODE_OVERLAY_PERMISSION);
+    }
+    
+    private void initializeFirstRun() {
+        Log.d(TAG, "Initializing first run");
         
+        setContentView(R.layout.activity_main);
+        initViews();
+        loadMqttConfig();
+        setupMqttReceiver();
+        
+        String detectedIp = getDeviceIpAddress();
+        tvServerIP.setText(detectedIp);
+        tvServerPort.setText("1234");
+        
+        setupPortConfirmButton();
+        setupMqttConnectButton();
+        setupClearButton();
+        
+        startServerService();
+        
+        SharedPreferences prefs = getSharedPreferences("ServerPrefs", MODE_PRIVATE);
         SharedPreferences.Editor editor = prefs.edit();
-        editor.putInt("startCount", startCount + 1);
+        editor.putInt("startCount", 1);
         editor.apply();
         
-        if (startCount == 0) {
-            Intent serviceIntent = new Intent(this, ServerService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent);
-            } else {
-                startService(serviceIntent);
-            }
-            Log.d(TAG, "ServerService started");
+        Log.d(TAG, "First run initialization completed");
+    }
+    
+    private void startServerService() {
+        Intent serviceIntent = new Intent(this, ServerService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent);
+        } else {
+            startService(serviceIntent);
         }
+        Log.d(TAG, "ServerService started");
+    }
+    
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
         
-        if (startCount == 0) {
-            textToSpeech = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-                @Override
-                public void onInit(int status) {
-                    if (status == TextToSpeech.SUCCESS) {
-                        Log.d(TAG, "TextToSpeech initialized successfully");
-                    }
+        if (requestCode == REQUEST_CODE_OVERLAY_PERMISSION) {
+            isWaitingForPermission = false;
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (Settings.canDrawOverlays(this)) {
+                    Log.d(TAG, "Overlay permission granted");
+                    initializeFirstRun();
+                } else {
+                    Log.w(TAG, "Overlay permission denied");
+                    Toast.makeText(this, "悬浮窗权限被拒绝，部分功能可能无法正常使用", Toast.LENGTH_LONG).show();
+                    
+                    setContentView(R.layout.activity_main);
+                    initViews();
+                    loadMqttConfig();
+                    setupMqttReceiver();
+                    
+                    String detectedIp = getDeviceIpAddress();
+                    tvServerIP.setText(detectedIp);
+                    tvServerPort.setText("1234");
+                    
+                    setupPortConfirmButton();
+                    setupMqttConnectButton();
+                    setupClearButton();
+                    
+                    appendLog("警告: 悬浮窗权限被拒绝，弹窗功能将无法使用");
+                    
+                    startServerService();
+                    
+                    SharedPreferences prefs = getSharedPreferences("ServerPrefs", MODE_PRIVATE);
+                    SharedPreferences.Editor editor = prefs.edit();
+                    editor.putInt("startCount", 1);
+                    editor.apply();
                 }
-            });
+            } else {
+                initializeFirstRun();
+            }
         }
-        
-        Log.d(TAG, "Server service started, UI ready");
     }
     
     private void initViews() {
@@ -198,7 +247,12 @@ public class MainActivity extends Activity {
         filter.addAction(MqttManager.ACTION_MQTT_CONNECTED);
         filter.addAction(MqttManager.ACTION_MQTT_DISCONNECTED);
         filter.addAction(MqttManager.ACTION_MQTT_MESSAGE_RECEIVED);
-        registerReceiver(mqttReceiver, filter);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(mqttReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(mqttReceiver, filter);
+        }
     }
     
     private void setupMqttConnectButton() {
@@ -340,35 +394,15 @@ public class MainActivity extends Activity {
         getMenuInflater().inflate(R.menu.main, menu);
         return true;
     }
-
-    private void checkFloatingWindowPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(this)) {
-                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName()));
-                startActivityForResult(intent, 1001);
-            }
-        }
-    }
-    
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == 1001) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (Settings.canDrawOverlays(this)) {
-                    Log.d(TAG, "Floating window permission granted");
-                } else {
-                    Log.d(TAG, "Floating window permission denied");
-                }
-            }
-        }
-    }
     
     @Override
     protected void onDestroy() {
         if (mqttReceiver != null) {
-            unregisterReceiver(mqttReceiver);
+            try {
+                unregisterReceiver(mqttReceiver);
+            } catch (IllegalArgumentException e) {
+                Log.w(TAG, "Receiver not registered: " + e.getMessage());
+            }
         }
         if (textToSpeech != null) {
             textToSpeech.stop();
