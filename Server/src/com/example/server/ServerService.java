@@ -6,6 +6,8 @@ import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -17,12 +19,10 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.ComponentName;
-import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.os.Build;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -30,17 +30,17 @@ import android.os.IBinder;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
-import android.app.Notification.Builder;
 
 public class ServerService extends Service {
     private static final String TAG = "ServerService";
     
     private TextToSpeech textToSpeech;
+    private boolean ttsInitialized = false;
     private boolean isRunning = false;
     
     private FloatingWindowService floatingWindowService;
     private boolean isFloatingWindowBound = false;
-    private TTSState currentTTSState = TTSState.IDLE;
+    private final Object serviceLock = new Object();
     private Handler mainHandler;
     
     private MqttManager mqttManager;
@@ -51,20 +51,26 @@ public class ServerService extends Service {
     private static final int DEFAULT_HTTP_PORT = 1234;
     private int currentHttpPort = DEFAULT_HTTP_PORT;
     
+    private ExecutorService httpExecutor;
+    
     private ServiceConnection floatingWindowConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             Log.d(TAG, "FloatingWindowService connected");
-            FloatingWindowService.LocalBinder binder = (FloatingWindowService.LocalBinder) service;
-            floatingWindowService = binder.getService();
-            isFloatingWindowBound = true;
+            synchronized (serviceLock) {
+                FloatingWindowService.LocalBinder binder = (FloatingWindowService.LocalBinder) service;
+                floatingWindowService = binder.getService();
+                isFloatingWindowBound = true;
+            }
         }
         
         @Override
         public void onServiceDisconnected(ComponentName name) {
             Log.d(TAG, "FloatingWindowService disconnected");
-            floatingWindowService = null;
-            isFloatingWindowBound = false;
+            synchronized (serviceLock) {
+                floatingWindowService = null;
+                isFloatingWindowBound = false;
+            }
         }
     };
     
@@ -77,6 +83,7 @@ public class ServerService extends Service {
         Log.d(TAG, "Service created");
         
         mainHandler = new Handler(Looper.getMainLooper());
+        httpExecutor = Executors.newCachedThreadPool();
         
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, createNotification());
@@ -84,8 +91,12 @@ public class ServerService extends Service {
         initTextToSpeech();
         
         Intent floatingWindowIntent = new Intent(this, FloatingWindowService.class);
-        startService(floatingWindowIntent);
-        bindService(floatingWindowIntent, floatingWindowConnection, Context.BIND_AUTO_CREATE);
+        try {
+            startService(floatingWindowIntent);
+            bindService(floatingWindowIntent, floatingWindowConnection, Context.BIND_AUTO_CREATE);
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting/binding FloatingWindowService", e);
+        }
         
         loadSettings();
         
@@ -106,15 +117,24 @@ public class ServerService extends Service {
     }
     
     private void initTextToSpeech() {
-        textToSpeech = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS) {
-                    Log.d(TAG, "TextToSpeech initialized successfully");
-                    setupTTSListener();
+        try {
+            textToSpeech = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
+                @Override
+                public void onInit(int status) {
+                    if (status == TextToSpeech.SUCCESS) {
+                        Log.d(TAG, "TextToSpeech initialized successfully");
+                        ttsInitialized = true;
+                        setupTTSListener();
+                    } else {
+                        Log.e(TAG, "TextToSpeech initialization failed with status: " + status);
+                        ttsInitialized = false;
+                    }
                 }
-            }
-        });
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing TextToSpeech", e);
+            ttsInitialized = false;
+        }
     }
     
     private void setupTTSListener() {
@@ -155,55 +175,65 @@ public class ServerService extends Service {
     private void initMqtt() {
         Log.d(TAG, "Initializing MQTT client");
         
-        mqttManager = new MqttManager(this);
-        mqttManager.setConnectionListener(new MqttManager.MqttConnectionListener() {
-            @Override
-            public void onConnected() {
-                Log.d(TAG, "MQTT connected");
-                updateNotification();
-                mqttManager.publishStatus("{\"status\":\"online\",\"client_id\":\"" + mqttManager.getConfig().getClientId() + "\"}");
-            }
+        try {
+            mqttManager = new MqttManager(this);
+            mqttManager.setConnectionListener(new MqttManager.MqttConnectionListener() {
+                @Override
+                public void onConnected() {
+                    Log.d(TAG, "MQTT connected");
+                    updateNotification();
+                    if (mqttManager != null && mqttManager.getConfig() != null) {
+                        mqttManager.publishStatus("{\"status\":\"online\",\"client_id\":\"" + mqttManager.getConfig().getClientId() + "\"}");
+                    }
+                }
+                
+                @Override
+                public void onDisconnected() {
+                    Log.d(TAG, "MQTT disconnected");
+                    updateNotification();
+                }
+                
+                @Override
+                public void onConnectionFailed(Throwable cause) {
+                    Log.e(TAG, "MQTT connection failed", cause);
+                    updateNotification();
+                }
+            });
             
-            @Override
-            public void onDisconnected() {
-                Log.d(TAG, "MQTT disconnected");
-                updateNotification();
-            }
+            mqttManager.setMessageListener(new MqttManager.MqttMessageListener() {
+                @Override
+                public void onMessageReceived(String topic, String payload) {
+                    Log.d(TAG, "MQTT message received: " + payload);
+                    processPayload(payload);
+                }
+            });
             
-            @Override
-            public void onConnectionFailed(Throwable cause) {
-                Log.e(TAG, "MQTT connection failed", cause);
-                updateNotification();
-            }
-        });
-        
-        mqttManager.setMessageListener(new MqttManager.MqttMessageListener() {
-            @Override
-            public void onMessageReceived(String topic, String payload) {
-                Log.d(TAG, "MQTT message received: " + payload);
-                processPayload(payload);
-            }
-        });
-        
-        mqttManager.connect();
+            mqttManager.connect();
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing MQTT", e);
+        }
     }
     
     private void showFloatingWindow(String text) {
         Log.d(TAG, "showFloatingWindow called with text: " + text);
-        if (isFloatingWindowBound && floatingWindowService != null) {
-            floatingWindowService.updateText(text);
-            floatingWindowService.showWindow();
-        } else {
-            Log.w(TAG, "FloatingWindowService not bound, cannot show window");
+        synchronized (serviceLock) {
+            if (isFloatingWindowBound && floatingWindowService != null) {
+                floatingWindowService.updateText(text);
+                floatingWindowService.showWindow();
+            } else {
+                Log.w(TAG, "FloatingWindowService not bound, cannot show window");
+            }
         }
     }
     
     private void hideFloatingWindow() {
         Log.d(TAG, "hideFloatingWindow called");
-        if (isFloatingWindowBound && floatingWindowService != null) {
-            floatingWindowService.hideWindow();
-        } else {
-            Log.w(TAG, "FloatingWindowService not bound, cannot hide window");
+        synchronized (serviceLock) {
+            if (isFloatingWindowBound && floatingWindowService != null) {
+                floatingWindowService.hideWindow();
+            } else {
+                Log.w(TAG, "FloatingWindowService not bound, cannot hide window");
+            }
         }
     }
     
@@ -295,9 +325,13 @@ public class ServerService extends Service {
     }
     
     public void updateNotification() {
-        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) {
-            manager.notify(NOTIFICATION_ID, createNotification());
+        try {
+            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) {
+                manager.notify(NOTIFICATION_ID, createNotification());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating notification", e);
         }
     }
     
@@ -314,7 +348,7 @@ public class ServerService extends Service {
                         try {
                             Socket socket = serverSocket.accept();
                             Log.d(TAG, "HTTP Client connected");
-                            new HttpAsyncTask().execute(socket);
+                            httpExecutor.execute(new HttpHandler(socket));
                         } catch (IOException e) {
                             if (isRunning) {
                                 Log.e(TAG, "Error accepting HTTP client connection", e);
@@ -337,6 +371,9 @@ public class ServerService extends Service {
                 Log.e(TAG, "Error closing HTTP server socket", e);
             }
             serverSocket = null;
+        }
+        if (httpExecutor != null) {
+            httpExecutor.shutdown();
         }
     }
     
@@ -396,22 +433,38 @@ public class ServerService extends Service {
         
         isRunning = false;
         
-        if (isFloatingWindowBound) {
-            unbindService(floatingWindowConnection);
-            isFloatingWindowBound = false;
+        synchronized (serviceLock) {
+            if (isFloatingWindowBound) {
+                try {
+                    unbindService(floatingWindowConnection);
+                } catch (IllegalArgumentException e) {
+                    Log.w(TAG, "Service not registered when trying to unbind: " + e.getMessage());
+                }
+                isFloatingWindowBound = false;
+            }
         }
         
         stopHttpServer();
         
         if (mqttManager != null) {
-            mqttManager.publishStatus("{\"status\":\"offline\"}");
-            mqttManager.release();
+            try {
+                mqttManager.publishStatus("{\"status\":\"offline\"}");
+                mqttManager.release();
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing MQTT manager", e);
+            }
             mqttManager = null;
         }
         
         if (textToSpeech != null) {
-            textToSpeech.stop();
-            textToSpeech.shutdown();
+            try {
+                textToSpeech.stop();
+                textToSpeech.shutdown();
+            } catch (Exception e) {
+                Log.e(TAG, "Error shutting down TTS", e);
+            }
+            textToSpeech = null;
+            ttsInitialized = false;
         }
     }
     
@@ -426,13 +479,14 @@ public class ServerService extends Service {
             if (jsonObject.has("tts") && jsonObject.getBoolean("tts")) {
                 if (jsonObject.has("txt")) {
                     String text = jsonObject.getString("txt");
-                    if (!text.isEmpty() && textToSpeech != null) {
+                    if (!text.isEmpty() && ttsInitialized && textToSpeech != null) {
                         int volume = 40;
                         if (jsonObject.has("volume")) {
                             try {
                                 volume = jsonObject.getInt("volume");
                                 volume = Math.max(0, Math.min(100, volume));
                             } catch (Exception e) {
+                                Log.w(TAG, "Invalid volume value");
                             }
                         }
                         
@@ -459,7 +513,7 @@ public class ServerService extends Service {
                                 break;
                         }
                         
-                        android.os.Bundle params = new android.os.Bundle();
+                        Bundle params = new Bundle();
                         params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volumeFloat);
                         params.putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, pan);
                         
@@ -468,45 +522,55 @@ public class ServerService extends Service {
                         showFloatingWindow(text);
                         
                         textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+                    } else {
+                        Log.w(TAG, "Cannot speak - TTS not ready or text is empty");
                     }
                 }
             }
         } catch (JSONException e) {
             Log.d(TAG, "Received non-JSON payload");
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing payload", e);
         }
     }
     
-    private class HttpAsyncTask extends AsyncTask<Socket, Void, String> {
+    private class HttpHandler implements Runnable {
+        private final Socket socket;
+        
+        HttpHandler(Socket socket) {
+            this.socket = socket;
+        }
+        
         @Override
-        protected String doInBackground(Socket... params) {
-            String result = null;
-            Socket mySocket = params[0];
+        public void run() {
             try {
-                InputStream is = mySocket.getInputStream();
-                OutputStream os = mySocket.getOutputStream();
+                InputStream is = socket.getInputStream();
+                OutputStream os = socket.getOutputStream();
                 
                 HttpRequestInfo requestInfo = parseHttpRequest(is);
                 
+                String result = null;
                 if (requestInfo.isPost && requestInfo.contentLength > 0) {
                     result = readPostPayload(is, requestInfo.contentLength);
                 }
                 
                 sendHttpResponse(os);
                 
-                mySocket.close();
+                socket.close();
+                
+                if (result != null) {
+                    Log.d(TAG, "Received HTTP POST payload: " + result);
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            processPayload(result);
+                        }
+                    });
+                }
             } catch (IOException e) {
                 Log.e(TAG, "Error handling HTTP client connection", e);
             } catch (Exception e) {
-                Log.e(TAG, "Unexpected error", e);
-            }
-            return result;
-        }
-        
-        @Override
-        protected void onPostExecute(String s) {
-            if (s != null) {
-                Log.d(TAG, "Received HTTP POST payload: " + s);
-                processPayload(s);
+                Log.e(TAG, "Unexpected error in HttpHandler", e);
             }
         }
         
@@ -577,10 +641,10 @@ public class ServerService extends Service {
             os.write(response.getBytes("UTF-8"));
             os.flush();
         }
-        
-        private class HttpRequestInfo {
-            boolean isPost = false;
-            int contentLength = 0;
-        }
+    }
+    
+    private class HttpRequestInfo {
+        boolean isPost = false;
+        int contentLength = 0;
     }
 }
