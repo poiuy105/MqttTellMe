@@ -20,6 +20,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -33,15 +34,22 @@ import android.app.Notification.Builder;
 
 public class ServerService extends Service {
     private static final String TAG = "ServerService";
-    private ServerSocket serverSocket;
+    
     private TextToSpeech textToSpeech;
     private boolean isRunning = false;
-    private static final int serverPort = 1234;
     
     private FloatingWindowService floatingWindowService;
     private boolean isFloatingWindowBound = false;
     private TTSState currentTTSState = TTSState.IDLE;
     private Handler mainHandler;
+    
+    private MqttManager mqttManager;
+    private boolean mqttEnabled = true;
+    private boolean httpFallbackEnabled = true;
+    
+    private ServerSocket serverSocket;
+    private static final int DEFAULT_HTTP_PORT = 1234;
+    private int currentHttpPort = DEFAULT_HTTP_PORT;
     
     private ServiceConnection floatingWindowConnection = new ServiceConnection() {
         @Override
@@ -62,23 +70,42 @@ public class ServerService extends Service {
     
     private static final String NOTIFICATION_CHANNEL_ID = "server_service_channel";
     private static final int NOTIFICATION_ID = 1001;
-    private int currentServerPort = 1234;
     
     @Override
     public void onCreate() {
         super.onCreate();
         Log.d(TAG, "Service created");
         
-        // Initialize main thread handler
         mainHandler = new Handler(Looper.getMainLooper());
         
-        // Create notification channel for foreground service
         createNotificationChannel();
-        
-        // Start foreground service with notification
         startForeground(NOTIFICATION_ID, createNotification());
         
-        // Initialize TextToSpeech
+        initTextToSpeech();
+        
+        Intent floatingWindowIntent = new Intent(this, FloatingWindowService.class);
+        startService(floatingWindowIntent);
+        bindService(floatingWindowIntent, floatingWindowConnection, Context.BIND_AUTO_CREATE);
+        
+        loadSettings();
+        
+        if (mqttEnabled) {
+            initMqtt();
+        }
+        
+        if (httpFallbackEnabled) {
+            startHttpServer();
+        }
+    }
+    
+    private void loadSettings() {
+        SharedPreferences prefs = getSharedPreferences("ServerPrefs", MODE_PRIVATE);
+        mqttEnabled = prefs.getBoolean("mqttEnabled", true);
+        httpFallbackEnabled = prefs.getBoolean("httpFallbackEnabled", true);
+        currentHttpPort = prefs.getInt("httpPort", DEFAULT_HTTP_PORT);
+    }
+    
+    private void initTextToSpeech() {
         textToSpeech = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
             @Override
             public void onInit(int status) {
@@ -88,14 +115,6 @@ public class ServerService extends Service {
                 }
             }
         });
-        
-        // Bind to FloatingWindowService
-        Intent floatingWindowIntent = new Intent(this, FloatingWindowService.class);
-        startService(floatingWindowIntent);
-        bindService(floatingWindowIntent, floatingWindowConnection, Context.BIND_AUTO_CREATE);
-        
-        // Start server in a separate thread
-        startServer();
     }
     
     private void setupTTSListener() {
@@ -109,13 +128,10 @@ public class ServerService extends Service {
                 @Override
                 public void onDone(String utteranceId) {
                     Log.d(TAG, "TTS completed - utteranceId: " + utteranceId);
-                    Log.d(TAG, "Starting 2-second delay before hiding window");
                     
-                    // Use main thread handler to ensure UI operations run on main thread
                     mainHandler.postDelayed(new Runnable() {
                         @Override
                         public void run() {
-                            Log.d(TAG, "2-second delay elapsed, calling hideFloatingWindow()");
                             hideFloatingWindow();
                         }
                     }, 2000);
@@ -133,15 +149,48 @@ public class ServerService extends Service {
                 }
             });
             Log.d(TAG, "TTS UtteranceProgressListener set up successfully");
-        } else {
-            Log.e(TAG, "textToSpeech is null, cannot set up listener");
         }
+    }
+    
+    private void initMqtt() {
+        Log.d(TAG, "Initializing MQTT client");
+        
+        mqttManager = new MqttManager(this);
+        mqttManager.setConnectionListener(new MqttManager.MqttConnectionListener() {
+            @Override
+            public void onConnected() {
+                Log.d(TAG, "MQTT connected");
+                updateNotification();
+                mqttManager.publishStatus("{\"status\":\"online\",\"client_id\":\"" + mqttManager.getConfig().getClientId() + "\"}");
+            }
+            
+            @Override
+            public void onDisconnected() {
+                Log.d(TAG, "MQTT disconnected");
+                updateNotification();
+            }
+            
+            @Override
+            public void onConnectionFailed(Throwable cause) {
+                Log.e(TAG, "MQTT connection failed", cause);
+                updateNotification();
+            }
+        });
+        
+        mqttManager.setMessageListener(new MqttManager.MqttMessageListener() {
+            @Override
+            public void onMessageReceived(String topic, String payload) {
+                Log.d(TAG, "MQTT message received: " + payload);
+                processPayload(payload);
+            }
+        });
+        
+        mqttManager.connect();
     }
     
     private void showFloatingWindow(String text) {
         Log.d(TAG, "showFloatingWindow called with text: " + text);
         if (isFloatingWindowBound && floatingWindowService != null) {
-            Log.d(TAG, "FloatingWindowService is bound, calling updateText and showWindow");
             floatingWindowService.updateText(text);
             floatingWindowService.showWindow();
         } else {
@@ -152,7 +201,6 @@ public class ServerService extends Service {
     private void hideFloatingWindow() {
         Log.d(TAG, "hideFloatingWindow called");
         if (isFloatingWindowBound && floatingWindowService != null) {
-            Log.d(TAG, "FloatingWindowService is bound, calling hideWindow");
             floatingWindowService.hideWindow();
         } else {
             Log.w(TAG, "FloatingWindowService not bound, cannot hide window");
@@ -212,21 +260,33 @@ public class ServerService extends Service {
             PendingIntent.FLAG_IMMUTABLE
         );
         
-        String ipAddress = getDeviceIpAddress();
-        String contentText = ipAddress + ":" + currentServerPort;
+        StringBuilder contentText = new StringBuilder();
+        
+        if (mqttManager != null && mqttManager.isConnected()) {
+            contentText.append("MQTT: ").append(mqttManager.getConfig().getClientId());
+        } else if (mqttEnabled) {
+            contentText.append("MQTT: Connecting...");
+        }
+        
+        if (httpFallbackEnabled) {
+            if (contentText.length() > 0) {
+                contentText.append(" | ");
+            }
+            contentText.append("HTTP: ").append(getDeviceIpAddress()).append(":").append(currentHttpPort);
+        }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             return new Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("post tell me")
-                .setContentText(contentText)
+                .setContentTitle("Post Tell Me")
+                .setContentText(contentText.toString())
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .build();
         } else {
             return new Notification.Builder(this)
-                .setContentTitle("post tell me")
-                .setContentText(contentText)
+                .setContentTitle("Post Tell Me")
+                .setContentText(contentText.toString())
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
@@ -241,63 +301,88 @@ public class ServerService extends Service {
         }
     }
     
-    private void startServer() {
-        startServer(currentServerPort);
-    }
-    
-    private void startServer(int port) {
+    private void startHttpServer() {
         isRunning = true;
-        currentServerPort = port;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    serverSocket = new ServerSocket(currentServerPort);
-                    Log.d(TAG, "Server started on port " + currentServerPort);
+                    serverSocket = new ServerSocket(currentHttpPort);
+                    Log.d(TAG, "HTTP Server started on port " + currentHttpPort);
                     
                     while (isRunning) {
                         try {
                             Socket socket = serverSocket.accept();
-                            Log.d(TAG, "Client connected");
-                            new ServerAsyncTask().execute(socket);
+                            Log.d(TAG, "HTTP Client connected");
+                            new HttpAsyncTask().execute(socket);
                         } catch (IOException e) {
                             if (isRunning) {
-                                Log.e(TAG, "Error accepting client connection", e);
+                                Log.e(TAG, "Error accepting HTTP client connection", e);
                             }
                         }
                     }
                 } catch (IOException e) {
-                    Log.e(TAG, "Error starting server", e);
+                    Log.e(TAG, "Error starting HTTP server", e);
                 }
             }
         }).start();
+    }
+    
+    private void stopHttpServer() {
+        isRunning = false;
+        if (serverSocket != null) {
+            try {
+                serverSocket.close();
+            } catch (IOException e) {
+                Log.e(TAG, "Error closing HTTP server socket", e);
+            }
+            serverSocket = null;
+        }
     }
     
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service started");
         
-        if (intent != null && intent.hasExtra("port")) {
-            int newPort = intent.getIntExtra("port", currentServerPort);
-            if (newPort != currentServerPort) {
-                Log.d(TAG, "Changing port from " + currentServerPort + " to " + newPort);
+        if (intent != null) {
+            if (intent.hasExtra("mqttServerUri")) {
+                String serverUri = intent.getStringExtra("mqttServerUri");
+                String clientId = intent.getStringExtra("mqttClientId");
+                String username = intent.getStringExtra("mqttUsername");
+                String password = intent.getStringExtra("mqttPassword");
                 
-                // Stop current server
-                isRunning = false;
-                if (serverSocket != null) {
-                    try {
-                        serverSocket.close();
-                    } catch (IOException e) {
-                        Log.e(TAG, "Error closing server socket", e);
-                    }
+                MqttConfig config = mqttManager != null ? mqttManager.getConfig() : new MqttConfig();
+                config.setServerUri(serverUri);
+                if (clientId != null && !clientId.isEmpty()) {
+                    config.setClientId(clientId);
                 }
+                config.setUsername(username != null ? username : "");
+                config.setPassword(password != null ? password : "");
                 
-                // Start server with new port
-                currentServerPort = newPort;
-                startServer(currentServerPort);
-                
-                // Update notification
-                updateNotification();
+                if (mqttManager != null) {
+                    mqttManager.disconnect();
+                    mqttManager.setConfig(config);
+                    mqttManager.connect();
+                } else {
+                    mqttManager = new MqttManager(this, config);
+                    initMqtt();
+                }
+            }
+            
+            if (intent.hasExtra("httpPort")) {
+                int newPort = intent.getIntExtra("httpPort", currentHttpPort);
+                if (newPort != currentHttpPort) {
+                    stopHttpServer();
+                    currentHttpPort = newPort;
+                    startHttpServer();
+                    updateNotification();
+                }
+            }
+            
+            if (intent.hasExtra("reconnect")) {
+                if (mqttManager != null && !mqttManager.isConnected()) {
+                    mqttManager.connect();
+                }
             }
         }
         
@@ -311,22 +396,19 @@ public class ServerService extends Service {
         
         isRunning = false;
         
-        // Unbind from FloatingWindowService
         if (isFloatingWindowBound) {
             unbindService(floatingWindowConnection);
             isFloatingWindowBound = false;
         }
         
-        // Shutdown server socket
-        if (serverSocket != null) {
-            try {
-                serverSocket.close();
-            } catch (IOException e) {
-                Log.e(TAG, "Error closing server socket", e);
-            }
+        stopHttpServer();
+        
+        if (mqttManager != null) {
+            mqttManager.publishStatus("{\"status\":\"offline\"}");
+            mqttManager.release();
+            mqttManager = null;
         }
         
-        // Shutdown TextToSpeech
         if (textToSpeech != null) {
             textToSpeech.stop();
             textToSpeech.shutdown();
@@ -338,7 +420,63 @@ public class ServerService extends Service {
         return null;
     }
     
-    private class ServerAsyncTask extends AsyncTask<Socket, Void, String> {
+    private void processPayload(String payload) {
+        try {
+            JSONObject jsonObject = new JSONObject(payload);
+            if (jsonObject.has("tts") && jsonObject.getBoolean("tts")) {
+                if (jsonObject.has("txt")) {
+                    String text = jsonObject.getString("txt");
+                    if (!text.isEmpty() && textToSpeech != null) {
+                        int volume = 40;
+                        if (jsonObject.has("volume")) {
+                            try {
+                                volume = jsonObject.getInt("volume");
+                                volume = Math.max(0, Math.min(100, volume));
+                            } catch (Exception e) {
+                            }
+                        }
+                        
+                        String channel = "stereo";
+                        if (jsonObject.has("channel")) {
+                            channel = jsonObject.getString("channel").toLowerCase();
+                            if (!channel.equals("left") && !channel.equals("right") && !channel.equals("stereo")) {
+                                channel = "stereo";
+                            }
+                        }
+                        
+                        float volumeFloat = volume / 100.0f;
+                        
+                        float pan = 0.0f;
+                        switch (channel) {
+                            case "left":
+                                pan = -1.0f;
+                                break;
+                            case "right":
+                                pan = 1.0f;
+                                break;
+                            default:
+                                pan = 0.0f;
+                                break;
+                        }
+                        
+                        android.os.Bundle params = new android.os.Bundle();
+                        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volumeFloat);
+                        params.putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, pan);
+                        
+                        String utteranceId = "tts_" + System.currentTimeMillis();
+                        
+                        showFloatingWindow(text);
+                        
+                        textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+                    }
+                }
+            }
+        } catch (JSONException e) {
+            Log.d(TAG, "Received non-JSON payload");
+        }
+    }
+    
+    private class HttpAsyncTask extends AsyncTask<Socket, Void, String> {
         @Override
         protected String doInBackground(Socket... params) {
             String result = null;
@@ -347,20 +485,17 @@ public class ServerService extends Service {
                 InputStream is = mySocket.getInputStream();
                 OutputStream os = mySocket.getOutputStream();
                 
-                // Parse HTTP request headers using InputStream
                 HttpRequestInfo requestInfo = parseHttpRequest(is);
                 
-                // Read POST payload if it's a POST request
                 if (requestInfo.isPost && requestInfo.contentLength > 0) {
                     result = readPostPayload(is, requestInfo.contentLength);
                 }
                 
-                // Send HTTP response
                 sendHttpResponse(os);
                 
                 mySocket.close();
             } catch (IOException e) {
-                Log.e(TAG, "Error handling client connection", e);
+                Log.e(TAG, "Error handling HTTP client connection", e);
             } catch (Exception e) {
                 Log.e(TAG, "Unexpected error", e);
             }
@@ -370,80 +505,11 @@ public class ServerService extends Service {
         @Override
         protected void onPostExecute(String s) {
             if (s != null) {
-                Log.d(TAG, "Received POST payload: " + s);
-                
-                // Check if payload is JSON and contains tts: true
-                try {
-                    JSONObject jsonObject = new JSONObject(s);
-                    if (jsonObject.has("tts") && jsonObject.getBoolean("tts")) {
-                        if (jsonObject.has("txt")) {
-                            String text = jsonObject.getString("txt");
-                            if (!text.isEmpty() && textToSpeech != null) {
-                                // Get volume (0-100, default 40)
-                                int volume = 40;
-                                if (jsonObject.has("volume")) {
-                                    try {
-                                        volume = jsonObject.getInt("volume");
-                                        // Clamp volume to 0-100 range
-                                        volume = Math.max(0, Math.min(100, volume));
-                                    } catch (Exception e) {
-                                        // Invalid volume, use default
-                                    }
-                                }
-                                
-                                // Get channel (left, right, stereo)
-                                String channel = "stereo";
-                                if (jsonObject.has("channel")) {
-                                    channel = jsonObject.getString("channel").toLowerCase();
-                                    // Validate channel value
-                                    if (!channel.equals("left") && !channel.equals("right") && !channel.equals("stereo")) {
-                                        channel = "stereo";
-                                    }
-                                }
-                                
-                                // Calculate volume (0.0-1.0)
-                                float volumeFloat = volume / 100.0f;
-                                
-                                // Calculate pan (-1.0 left, 0.0 center, 1.0 right)
-                                float pan = 0.0f;
-                                switch (channel) {
-                                    case "left":
-                                        pan = -1.0f;
-                                        break;
-                                    case "right":
-                                        pan = 1.0f;
-                                        break;
-                                    default: // stereo
-                                        pan = 0.0f;
-                                        break;
-                                }
-                                
-                                // Set TTS parameters
-                                android.os.Bundle params = new android.os.Bundle();
-                                params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volumeFloat);
-                                params.putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, pan);
-                                
-                                // Generate unique utterance ID
-                                String utteranceId = "tts_" + System.currentTimeMillis();
-                                
-                                // Show floating window
-                                showFloatingWindow(text);
-                                
-                                // Speak the text
-                                textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
-                            }
-                        }
-                    }
-                } catch (JSONException e) {
-                    // Not a valid JSON, ignore
-                    Log.d(TAG, "Received non-JSON payload");
-                }
+                Log.d(TAG, "Received HTTP POST payload: " + s);
+                processPayload(s);
             }
         }
         
-        /**
-         * Parse HTTP request headers directly from InputStream
-         */
         private HttpRequestInfo parseHttpRequest(InputStream is) throws IOException {
             HttpRequestInfo info = new HttpRequestInfo();
             StringBuilder headerLine = new StringBuilder();
@@ -452,19 +518,16 @@ public class ServerService extends Service {
             
             while ((b = is.read()) != -1) {
                 if (b == '\r') {
-                    // Check for \r\n
                     int next = is.read();
                     if (next == '\n') {
                         String line = headerLine.toString();
                         headerLine.setLength(0);
                         
                         if (line.isEmpty()) {
-                            // Empty line indicates end of headers
                             break;
                         }
                         
                         if (firstLine) {
-                            // Check if it's a POST request
                             if (line.startsWith("POST ")) {
                                 info.isPost = true;
                             }
@@ -477,7 +540,6 @@ public class ServerService extends Service {
                             }
                         }
                     } else if (next != -1) {
-                        // Not \r\n, add back \r and the next character
                         headerLine.append('\r');
                         headerLine.append((char) next);
                     }
@@ -489,9 +551,6 @@ public class ServerService extends Service {
             return info;
         }
         
-        /**
-         * Read POST payload from InputStream
-         */
         private String readPostPayload(InputStream is, int contentLength) throws IOException {
             if (contentLength <= 0) {
                 return "";
@@ -509,9 +568,6 @@ public class ServerService extends Service {
             return new String(buffer, 0, totalRead, "UTF-8");
         }
         
-        /**
-         * Send HTTP response
-         */
         private void sendHttpResponse(OutputStream os) throws IOException {
             String response = "HTTP/1.1 200 OK\r\n" +
                     "Content-Type: text/plain; charset=UTF-8\r\n" +
@@ -522,9 +578,6 @@ public class ServerService extends Service {
             os.flush();
         }
         
-        /**
-         * HTTP request information
-         */
         private class HttpRequestInfo {
             boolean isPost = false;
             int contentLength = 0;

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Build script for Post Tell Me Android app
+# Build script for Post Tell Me Android app with MQTT support
 
 echo "=== Environment Check ==="
 echo "ANDROID_HOME=$ANDROID_HOME"
@@ -27,6 +27,32 @@ ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
 # Create output directories
 mkdir -p Server/bin
 mkdir -p Server/gen
+mkdir -p Server/libs
+
+# Download MQTT dependencies if not present
+echo "=== Downloading MQTT Dependencies ==="
+MQTT_CLIENT_JAR="Server/libs/org.eclipse.paho.client.mqttv3-1.2.5.jar"
+MQTT_ANDROID_JAR="Server/libs/org.eclipse.paho.android.service-1.1.1.jar"
+
+if [ ! -f "$MQTT_CLIENT_JAR" ]; then
+    echo "Downloading Paho MQTT Client..."
+    wget -q -O "$MQTT_CLIENT_JAR" "https://repo1.maven.org/maven2/org/eclipse/paho/org.eclipse.paho.client.mqttv3/1.2.5/org.eclipse.paho.client.mqttv3-1.2.5.jar"
+fi
+
+if [ ! -f "$MQTT_ANDROID_JAR" ]; then
+    echo "Downloading Paho MQTT Android Service..."
+    wget -q -O "$MQTT_ANDROID_JAR" "https://repo1.maven.org/maven2/org/eclipse/paho/org.eclipse.paho.android.service/1.1.1/org.eclipse.paho.android.service-1.1.1.jar"
+fi
+
+# Build classpath with all JARs
+CLASSPATH="$ANDROID_JAR"
+for jar in Server/libs/*.jar; do
+    if [ -f "$jar" ]; then
+        CLASSPATH="$CLASSPATH:$jar"
+    fi
+done
+
+echo "Classpath: $CLASSPATH"
 
 # Step 1: Compile resources
 echo "=== Step 1: aapt compile resources ==="
@@ -42,7 +68,7 @@ echo "=== Step 2: Compile Java files ==="
 find Server/src -name "*.java" > Server/src_files.txt
 find Server/gen -name "*.java" >> Server/src_files.txt
 
-$JAVAC -d Server/bin -cp "$ANDROID_JAR" @Server/src_files.txt
+$JAVAC -d Server/bin -cp "$CLASSPATH" @Server/src_files.txt
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to compile Java files"
@@ -51,10 +77,19 @@ fi
 
 # Step 3: Create DEX file
 echo "=== Step 3: Create DEX file ==="
-# Find all class files and create DEX
+# Find all class files and JAR files
 find Server/bin -name "*.class" > Server/class_files.txt
+
+# Add JAR files to DEX
+DEX_INPUTS=""
+for jar in Server/libs/*.jar; do
+    if [ -f "$jar" ]; then
+        DEX_INPUTS="$DEX_INPUTS $jar"
+    fi
+done
+
 if [ -s Server/class_files.txt ]; then
-    $ANDROID_HOME/build-tools/34.0.0/d8 --output Server/bin @Server/class_files.txt
+    $ANDROID_HOME/build-tools/34.0.0/d8 --output Server/bin @Server/class_files.txt $DEX_INPUTS
 else
     echo "ERROR: No class files found"
     exit 1

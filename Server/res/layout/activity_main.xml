@@ -1,4 +1,4 @@
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/container"
     android:layout_width="match_parent"
@@ -8,57 +8,169 @@
  
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_margin="25dp"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
         android:orientation="vertical" >
- 
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="MQTT Configuration"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal" >
- 
+
             <TextView
-                android:id="@+id/textViewSrvrIP"
-                android:layout_width="100dp"
+                android:layout_width="80dp"
                 android:layout_height="wrap_content"
-                android:text="Server IP"
-                android:textAppearance="?android:attr/textAppearanceMedium" />
- 
+                android:text="Server URI"
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <EditText
+                android:id="@+id/editMqttServerUri"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:inputType="textUri"
+                android:hint="tcp://broker.emqx.io:1883"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" >
+
             <TextView
-                android:id="@+id/textViewSrvrIP1"
+                android:layout_width="80dp"
+                android:layout_height="wrap_content"
+                android:text="Client ID"
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <EditText
+                android:id="@+id/editMqttClientId"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:inputType="text"
+                android:hint="tellme_xxx"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" >
+
+            <TextView
+                android:layout_width="80dp"
+                android:layout_height="wrap_content"
+                android:text="Username"
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <EditText
+                android:id="@+id/editMqttUsername"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:inputType="text"
+                android:hint="(optional)"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" >
+
+            <TextView
+                android:layout_width="80dp"
+                android:layout_height="wrap_content"
+                android:text="Password"
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <EditText
+                android:id="@+id/editMqttPassword"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:inputType="textPassword"
+                android:hint="(optional)"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical" >
+
+            <TextView
+                android:id="@+id/textMqttStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Status: Disconnected"
+                android:textAppearance="?android:attr/textAppearanceSmall"
+                android:textColor="#FF6666" />
+
+            <Button
+                android:id="@+id/btnMqttConnect"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text=":"
-                android:textAppearance="?android:attr/textAppearanceMedium" />
- 
-            <EditText
+                android:text="Connect"
+                android:textSize="12sp"
+                style="?android:attr/buttonStyleSmall" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="HTTP Server (Fallback)"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" >
+
+            <TextView
+                android:layout_width="80dp"
+                android:layout_height="wrap_content"
+                android:text="Server IP"
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <TextView
                 android:id="@+id/textViewServerIP"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:inputType="text"
-                android:hint="127.0.0.1"
-                android:textAppearance="?android:attr/textAppearanceMedium" />
+                android:textAppearance="?android:attr/textAppearanceSmall" />
         </LinearLayout>
- 
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="50dp"
             android:orientation="horizontal" >
 
             <TextView
-                android:id="@+id/textViewSrvrPort"
-                android:layout_width="100dp"
+                android:layout_width="80dp"
                 android:layout_height="wrap_content"
-                android:text="Server Port"
-                android:textAppearance="?android:attr/textAppearanceMedium" />
-
-            <TextView
-                android:id="@+id/textViewSrvrPort1"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=":"
-                android:textAppearance="?android:attr/textAppearanceMedium" />
+                android:text="Port"
+                android:textAppearance="?android:attr/textAppearanceSmall" />
 
             <EditText
                 android:id="@+id/textViewServerPort"
@@ -67,29 +179,66 @@
                 android:layout_weight="1"
                 android:inputType="number"
                 android:hint="1234"
-                android:textAppearance="?android:attr/textAppearanceMedium" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/buttonConfirmPort"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Confirm"
+                android:text="Apply"
                 android:textSize="12sp"
                 style="?android:attr/buttonStyleSmall" />
         </LinearLayout>
- 
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="MQTT Topic Info"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/textMqttTopicInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Subscribe to: tellme/{client_id}/command"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:textColor="#666666" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text='Send JSON: {"tts":true,"txt":"Hello"}'
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:textColor="#666666"
+            android:layout_marginTop="4dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp" />
+
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="50dp"
             android:orientation="horizontal" >
             
             <TextView
-            android:id="@+id/textViewClMsg"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Client Message"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
+                android:id="@+id/textViewClMsg"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Message Log"
+                android:textAppearance="?android:attr/textAppearanceMedium" />
 
             <Button
                 android:id="@+id/button1"
@@ -104,23 +253,16 @@
 
         </RelativeLayout>
 
-        <ScrollView
-        android:id="@+id/scrollView1"
-        android:layout_width="fill_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
-	        <TextView
-	            android:id="@+id/textViewClientMessage"
-	            android:layout_width="match_parent"
-	            android:layout_height="wrap_content"
-	            android:layout_marginBottom="20dp"
-	            android:text=""
-	            android:textAppearance="?android:attr/textAppearanceMedium"
-	            android:singleLine="false"
-	            android:maxLines="1000" />
-        </ScrollView>
-        
+        <TextView
+            android:id="@+id/textViewClientMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp"
+            android:text=""
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:singleLine="false"
+            android:maxLines="100" />
 	
     </LinearLayout>
  
-</FrameLayout>
+</ScrollView>
