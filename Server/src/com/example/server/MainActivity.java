@@ -1,20 +1,5 @@
 package com.example.server;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.SocketException;
-import java.util.Enumeration;
-import java.util.HashMap;
-
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -26,7 +11,6 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
@@ -45,11 +29,6 @@ public class MainActivity extends Activity {
     private static final int REQUEST_CODE_OVERLAY_PERMISSION = 1001;
     
     private TextView tvClientMsg;
-    private EditText tvServerPort;
-    private TextView tvServerIP;
-    private int SERVER_PORT;
-    private String SERVER_IP;
-    Button clear;
     private TextToSpeech textToSpeech;
     
     private EditText editMqttServerUri;
@@ -104,11 +83,6 @@ public class MainActivity extends Activity {
         loadMqttConfig();
         setupMqttReceiver();
         
-        String detectedIp = getDeviceIpAddress();
-        tvServerIP.setText(detectedIp);
-        tvServerPort.setText("1234");
-        
-        setupPortConfirmButton();
         setupMqttConnectButton();
         setupClearButton();
         
@@ -152,11 +126,6 @@ public class MainActivity extends Activity {
                     loadMqttConfig();
                     setupMqttReceiver();
                     
-                    String detectedIp = getDeviceIpAddress();
-                    tvServerIP.setText(detectedIp);
-                    tvServerPort.setText("1234");
-                    
-                    setupPortConfirmButton();
                     setupMqttConnectButton();
                     setupClearButton();
                     
@@ -177,8 +146,6 @@ public class MainActivity extends Activity {
     
     private void initViews() {
         tvClientMsg = (TextView) findViewById(R.id.textViewClientMessage);
-        tvServerPort = (EditText) findViewById(R.id.textViewServerPort);
-        tvServerIP = (TextView) findViewById(R.id.textViewServerIP);
         
         editMqttServerUri = (EditText) findViewById(R.id.editMqttServerUri);
         editMqttClientId = (EditText) findViewById(R.id.editMqttClientId);
@@ -187,7 +154,6 @@ public class MainActivity extends Activity {
         textMqttStatus = (TextView) findViewById(R.id.textMqttStatus);
         textMqttTopicInfo = (TextView) findViewById(R.id.textMqttTopicInfo);
         btnMqttConnect = (Button) findViewById(R.id.btnMqttConnect);
-        clear = (Button) findViewById(R.id.button1);
     }
     
     private void loadMqttConfig() {
@@ -304,44 +270,8 @@ public class MainActivity extends Activity {
         });
     }
     
-    private void setupPortConfirmButton() {
-        Button btnConfirmPort = (Button) findViewById(R.id.buttonConfirmPort);
-        if (btnConfirmPort != null) {
-            btnConfirmPort.setOnClickListener(new OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    String portStr = tvServerPort.getText().toString().trim();
-                    if (!portStr.isEmpty()) {
-                        try {
-                            int newPort = Integer.parseInt(portStr);
-                            if (newPort > 0 && newPort <= 65535) {
-                                SharedPreferences.Editor editor = getSharedPreferences("ServerPrefs", MODE_PRIVATE).edit();
-                                editor.putInt("httpPort", newPort);
-                                editor.apply();
-                                
-                                Intent restartIntent = new Intent(MainActivity.this, ServerService.class);
-                                restartIntent.putExtra("httpPort", newPort);
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    startForegroundService(restartIntent);
-                                } else {
-                                    startService(restartIntent);
-                                }
-                                
-                                appendLog("HTTP Port changed to: " + newPort);
-                                Log.d(TAG, "Port changed to: " + newPort);
-                            } else {
-                                tvServerPort.setError("Port must be 1-65535");
-                            }
-                        } catch (NumberFormatException e) {
-                            tvServerPort.setError("Invalid port number");
-                        }
-                    }
-                }
-            });
-        }
-    }
-    
     private void setupClearButton() {
+        Button clear = (Button) findViewById(R.id.button1);
         clear.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -358,35 +288,6 @@ public class MainActivity extends Activity {
             newLog = newLog.substring(0, 5000);
         }
         tvClientMsg.setText(newLog);
-    }
-
-    public String getDeviceIpAddress() {
-        String ipAddress = "127.0.0.1";
-        try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            while (interfaces.hasMoreElements()) {
-                NetworkInterface networkInterface = interfaces.nextElement();
-                if (networkInterface.isLoopback() || !networkInterface.isUp()) {
-                    continue;
-                }
-                
-                Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
-                while (addresses.hasMoreElements()) {
-                    InetAddress inetAddress = addresses.nextElement();
-                    if (!inetAddress.isLoopbackAddress() && inetAddress.getHostAddress().indexOf(':') < 0) {
-                        ipAddress = inetAddress.getHostAddress();
-                        Log.d(TAG, "Found IP: " + ipAddress + " on interface: " + networkInterface.getName());
-                        if (networkInterface.getName().toLowerCase().contains("wlan") ||
-                            networkInterface.getName().toLowerCase().contains("wifi")) {
-                            return ipAddress;
-                        }
-                    }
-                }
-            }
-        } catch (SocketException e) {
-            Log.e(TAG, "Error getting IP address", e);
-        }
-        return ipAddress;
     }
 
     @Override

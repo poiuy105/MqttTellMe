@@ -1,11 +1,5 @@
 package com.example.server;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -17,8 +11,8 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.Context;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
@@ -45,13 +39,6 @@ public class ServerService extends Service {
     
     private MqttManager mqttManager;
     private boolean mqttEnabled = true;
-    private boolean httpFallbackEnabled = true;
-    
-    private ServerSocket serverSocket;
-    private static final int DEFAULT_HTTP_PORT = 1234;
-    private int currentHttpPort = DEFAULT_HTTP_PORT;
-    
-    private ExecutorService httpExecutor;
     
     private ServiceConnection floatingWindowConnection = new ServiceConnection() {
         @Override
@@ -83,7 +70,6 @@ public class ServerService extends Service {
         Log.d(TAG, "Service created");
         
         mainHandler = new Handler(Looper.getMainLooper());
-        httpExecutor = Executors.newCachedThreadPool();
         
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, createNotification());
@@ -103,17 +89,11 @@ public class ServerService extends Service {
         if (mqttEnabled) {
             initMqtt();
         }
-        
-        if (httpFallbackEnabled) {
-            startHttpServer();
-        }
     }
     
     private void loadSettings() {
         SharedPreferences prefs = getSharedPreferences("ServerPrefs", MODE_PRIVATE);
         mqttEnabled = prefs.getBoolean("mqttEnabled", true);
-        httpFallbackEnabled = prefs.getBoolean("httpFallbackEnabled", true);
-        currentHttpPort = prefs.getInt("httpPort", DEFAULT_HTTP_PORT);
     }
     
     private void initTextToSpeech() {
@@ -293,16 +273,9 @@ public class ServerService extends Service {
         StringBuilder contentText = new StringBuilder();
         
         if (mqttManager != null && mqttManager.isConnected()) {
-            contentText.append("MQTT: ").append(mqttManager.getConfig().getClientId());
+            contentText.append("MQTT: " + mqttManager.getConfig().getClientId());
         } else if (mqttEnabled) {
             contentText.append("MQTT: Connecting...");
-        }
-        
-        if (httpFallbackEnabled) {
-            if (contentText.length() > 0) {
-                contentText.append(" | ");
-            }
-            contentText.append("HTTP: ").append(getDeviceIpAddress()).append(":").append(currentHttpPort);
         }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -335,48 +308,6 @@ public class ServerService extends Service {
         }
     }
     
-    private void startHttpServer() {
-        isRunning = true;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    serverSocket = new ServerSocket(currentHttpPort);
-                    Log.d(TAG, "HTTP Server started on port " + currentHttpPort);
-                    
-                    while (isRunning) {
-                        try {
-                            Socket socket = serverSocket.accept();
-                            Log.d(TAG, "HTTP Client connected");
-                            httpExecutor.execute(new HttpHandler(socket));
-                        } catch (IOException e) {
-                            if (isRunning) {
-                                Log.e(TAG, "Error accepting HTTP client connection", e);
-                            }
-                        }
-                    }
-                } catch (IOException e) {
-                    Log.e(TAG, "Error starting HTTP server", e);
-                }
-            }
-        }).start();
-    }
-    
-    private void stopHttpServer() {
-        isRunning = false;
-        if (serverSocket != null) {
-            try {
-                serverSocket.close();
-            } catch (IOException e) {
-                Log.e(TAG, "Error closing HTTP server socket", e);
-            }
-            serverSocket = null;
-        }
-        if (httpExecutor != null) {
-            httpExecutor.shutdown();
-        }
-    }
-    
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service started");
@@ -403,16 +334,6 @@ public class ServerService extends Service {
                 } else {
                     mqttManager = new MqttManager(this, config);
                     initMqtt();
-                }
-            }
-            
-            if (intent.hasExtra("httpPort")) {
-                int newPort = intent.getIntExtra("httpPort", currentHttpPort);
-                if (newPort != currentHttpPort) {
-                    stopHttpServer();
-                    currentHttpPort = newPort;
-                    startHttpServer();
-                    updateNotification();
                 }
             }
             
@@ -443,8 +364,6 @@ public class ServerService extends Service {
                 isFloatingWindowBound = false;
             }
         }
-        
-        stopHttpServer();
         
         if (mqttManager != null) {
             try {
@@ -532,121 +451,5 @@ public class ServerService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "Error processing payload", e);
         }
-    }
-    
-    private class HttpHandler implements Runnable {
-        private final Socket socket;
-        
-        HttpHandler(Socket socket) {
-            this.socket = socket;
-        }
-        
-        @Override
-        public void run() {
-            try {
-                InputStream is = socket.getInputStream();
-                OutputStream os = socket.getOutputStream();
-                
-                HttpRequestInfo requestInfo = parseHttpRequest(is);
-                
-                final String result;
-                if (requestInfo.isPost && requestInfo.contentLength > 0) {
-                    result = readPostPayload(is, requestInfo.contentLength);
-                } else {
-                    result = null;
-                }
-                
-                sendHttpResponse(os);
-                
-                socket.close();
-                
-                if (result != null) {
-                    Log.d(TAG, "Received HTTP POST payload: " + result);
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            processPayload(result);
-                        }
-                    });
-                }
-            } catch (IOException e) {
-                Log.e(TAG, "Error handling HTTP client connection", e);
-            } catch (Exception e) {
-                Log.e(TAG, "Unexpected error in HttpHandler", e);
-            }
-        }
-        
-        private HttpRequestInfo parseHttpRequest(InputStream is) throws IOException {
-            HttpRequestInfo info = new HttpRequestInfo();
-            StringBuilder headerLine = new StringBuilder();
-            int b;
-            boolean firstLine = true;
-            
-            while ((b = is.read()) != -1) {
-                if (b == '\r') {
-                    int next = is.read();
-                    if (next == '\n') {
-                        String line = headerLine.toString();
-                        headerLine.setLength(0);
-                        
-                        if (line.isEmpty()) {
-                            break;
-                        }
-                        
-                        if (firstLine) {
-                            if (line.startsWith("POST ")) {
-                                info.isPost = true;
-                            }
-                            firstLine = false;
-                        } else if (line.toLowerCase().startsWith("content-length:")) {
-                            try {
-                                info.contentLength = Integer.parseInt(line.substring(15).trim());
-                            } catch (NumberFormatException e) {
-                                info.contentLength = 0;
-                            }
-                        }
-                    } else if (next != -1) {
-                        headerLine.append('\r');
-                        headerLine.append((char) next);
-                    }
-                } else {
-                    headerLine.append((char) b);
-                }
-            }
-            
-            return info;
-        }
-        
-        private String readPostPayload(InputStream is, int contentLength) throws IOException {
-            if (contentLength <= 0) {
-                return "";
-            }
-            
-            byte[] buffer = new byte[contentLength];
-            int totalRead = 0;
-            
-            while (totalRead < contentLength) {
-                int read = is.read(buffer, totalRead, contentLength - totalRead);
-                if (read == -1) break;
-                totalRead += read;
-            }
-            
-            return new String(buffer, 0, totalRead, "UTF-8");
-        }
-        
-        private void sendHttpResponse(OutputStream os) throws IOException {
-            String response = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: text/plain; charset=UTF-8\r\n" +
-                    "Content-Length: 0\r\n" +
-                    "Connection: close\r\n" +
-                    "\r\n";
-            os.write(response.getBytes("UTF-8"));
-            os.flush();
-        }
-    }
-    
-    private class HttpRequestInfo {
-        boolean isPost = false;
-        int contentLength = 0;
     }
 }
