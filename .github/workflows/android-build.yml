@@ -22,6 +22,9 @@ jobs:
     - name: Set up Gradle
       uses: gradle/gradle-build-action@v2
 
+    - name: Grant execute permission for gradlew
+      run: chmod +x ./Server/gradlew
+
     - name: Build with Gradle
       run: cd Server && ./gradlew assembleDebug
 
