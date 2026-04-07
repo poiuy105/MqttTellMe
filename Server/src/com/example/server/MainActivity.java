@@ -3,7 +3,7 @@ package com.example.server;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import android.app.Activity;
+import androidx.appcompat.app.AppCompatActivity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -24,7 +24,7 @@ import android.widget.TextView;
 import android.widget.EditText;
 import android.widget.Toast;
 
-public class MainActivity extends Activity {
+public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private static final int REQUEST_CODE_OVERLAY_PERMISSION = 1001;
     
