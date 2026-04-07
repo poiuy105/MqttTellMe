@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">PostTellMe</string>
+    <string name="hello_world">Hello world!</string>
+    <string name="action_settings">Settings</string>
+    <string name="mqtt_status_disconnected">Status: Disconnected</string>
+    <string name="mqtt_status_connecting">Status: Connecting...</string>
+    <string name="mqtt_status_connected">Status: Connected</string>
+    <string name="mqtt_status_failed">Status: Connection Failed</string>
+    <string name="mqtt_connect">Connect</string>
+    <string name="mqtt_disconnect">Disconnect</string>
+
+</resources>
