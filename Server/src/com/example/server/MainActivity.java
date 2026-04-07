@@ -243,6 +243,11 @@ public class MainActivity extends Activity {
                         return;
                     }
                     
+                    if (!serverUri.startsWith("tcp://") && !serverUri.startsWith("ssl://")) {
+                        Toast.makeText(MainActivity.this, "Invalid MQTT Server URI format. Please use tcp:// or ssl:// prefix", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    
                     if (clientId.isEmpty()) {
                         clientId = "tellme_" + System.currentTimeMillis();
                         editMqttClientId.setText(clientId);

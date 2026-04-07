@@ -293,6 +293,13 @@ public class MqttManager implements MqttCallback {
         if (connectionListener != null) {
             connectionListener.onConnectionFailed(cause);
         }
+        
+        try {
+            Intent intent = new Intent(ACTION_MQTT_DISCONNECTED);
+            context.sendBroadcast(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending broadcast", e);
+        }
     }
     
     public void saveConfig(MqttConfig config) {
