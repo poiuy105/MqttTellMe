@@ -19,17 +19,29 @@ jobs:
         java-version: '11'
         distribution: 'adopt'
 
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v3
+    - name: Install Android SDK
+      run: |
+        sudo apt update
+        sudo apt install -y android-sdk
+        echo "ANDROID_HOME=/usr/lib/android-sdk" >> $GITHUB_ENV
+        echo "PATH=$PATH:$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools" >> $GITHUB_ENV
 
-    - name: Set up Gradle
-      uses: gradle/gradle-build-action@v3
+    - name: Accept SDK licenses
+      run: |
+        yes | sdkmanager --licenses || true
+
+    - name: Install SDK components
+      run: |
+        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
     - name: Grant execute permission for gradlew
       run: chmod +x ./Server/gradlew
 
     - name: Build with Gradle
-      run: cd Server && ./gradlew assembleDebug --info
+      run: cd Server && ./gradlew assembleDebug --stacktrace --info
+
+    - name: Check build output
+      run: ls -la ./Server/build/outputs/apk/debug/
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
