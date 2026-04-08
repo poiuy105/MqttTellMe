@@ -54,7 +54,12 @@ public class JavaMQTT {
         options.setMaxInflight(100);
 
         if (serverUri.startsWith("ssl://")) {
-            options.setSocketFactory(getTrustAllSSLSocketFactory());
+            SSLSocketFactory socketFactory = getTrustAllSSLSocketFactory();
+            if (socketFactory != null) {
+                options.setSocketFactory(socketFactory);
+            } else {
+                Log.w(TAG, "Using default SSL socket factory");
+            }
         }
 
         client.setCallback(new MqttCallbackExtended() {
@@ -269,7 +274,8 @@ public class JavaMQTT {
             sslContext.init(null, trustAllCerts, new SecureRandom());
             return sslContext.getSocketFactory();
         } catch (Exception e) {
-            throw new RuntimeException("Failed to create SSLSocketFactory", e);
+            Log.e(TAG, "Failed to create SSLSocketFactory", e);
+            return null;
         }
     }
 }
