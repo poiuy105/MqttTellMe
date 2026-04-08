@@ -10,7 +10,9 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.util.Locale;
 import java.util.Map;
+import java.util.MissingResourceException;
 import java.util.concurrent.*;
 
 import android.util.Log;
@@ -41,60 +43,126 @@ public class JavaMQTT {
     }
 
     public JavaMQTT(String serverUri, String clientId, String persistenceDir, Executor callbackExecutor) throws MqttException {
-        this.client = new MqttAsyncClient(serverUri, clientId,
-                persistenceDir != null ? new MqttDefaultFilePersistence(persistenceDir) : new MemoryPersistence());
-        this.options = new MqttConnectOptions();
-        this.executor = Executors.newFixedThreadPool(4);
-        this.callbackExecutor = callbackExecutor != null ? callbackExecutor : Executors.newCachedThreadPool();
+        try {
+            // Set default locale to English to avoid MissingResourceException
+            Locale.setDefault(Locale.ENGLISH);
+            
+            this.client = new MqttAsyncClient(serverUri, clientId,
+                    persistenceDir != null ? new MqttDefaultFilePersistence(persistenceDir) : new MemoryPersistence());
+            this.options = new MqttConnectOptions();
+            this.executor = Executors.newFixedThreadPool(4);
+            this.callbackExecutor = callbackExecutor != null ? callbackExecutor : Executors.newCachedThreadPool();
 
-        options.setAutomaticReconnect(true);
-        options.setCleanSession(true);
-        options.setConnectionTimeout(10);
-        options.setKeepAliveInterval(20);
-        options.setMaxInflight(100);
+            options.setAutomaticReconnect(true);
+            options.setCleanSession(true);
+            options.setConnectionTimeout(10);
+            options.setKeepAliveInterval(20);
+            options.setMaxInflight(100);
 
-        if (serverUri.startsWith("ssl://")) {
-            SSLSocketFactory socketFactory = getTrustAllSSLSocketFactory();
-            if (socketFactory != null) {
-                options.setSocketFactory(socketFactory);
-            } else {
-                Log.w(TAG, "Using default SSL socket factory");
+            if (serverUri.startsWith("ssl://")) {
+                SSLSocketFactory socketFactory = getTrustAllSSLSocketFactory();
+                if (socketFactory != null) {
+                    options.setSocketFactory(socketFactory);
+                } else {
+                    Log.w(TAG, "Using default SSL socket factory");
+                }
             }
+
+            client.setCallback(new MqttCallbackExtended() {
+                @Override
+                public void connectComplete(boolean reconnect, String serverURI) {
+                    Log.i(TAG, "Connected to MQTT broker: " + serverURI + ", reconnect: " + reconnect);
+                    if (onReconnectListener != null) callbackExecutor.execute(onReconnectListener);
+                    if (reconnect) resubscribeAll();
+                }
+
+                @Override
+                public void connectionLost(Throwable cause) {
+                    Log.w(TAG, "Connection lost", cause);
+                }
+
+                @Override
+                public void messageArrived(String topic, MqttMessage message) {
+                    final String payload = new String(message.getPayload());
+                    Log.d(TAG, "Message arrived on topic " + topic + ": " + payload);
+                    callbackExecutor.execute(() -> {
+                        try {
+                            MessageListener listener = topicListeners.get(topic);
+                            if (listener != null) listener.onMessage(topic, payload);
+                            if (globalListener != null) globalListener.onMessage(topic, payload);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error in message callback", e);
+                        }
+                    });
+                }
+
+                @Override
+                public void deliveryComplete(IMqttDeliveryToken token) {
+                    Log.d(TAG, "Delivery complete for message");
+                }
+            });
+        } catch (MissingResourceException e) {
+            Log.e(TAG, "Missing resource exception, setting default locale to English", e);
+            // Set default locale to English and try again
+            Locale.setDefault(Locale.ENGLISH);
+            this.client = new MqttAsyncClient(serverUri, clientId,
+                    persistenceDir != null ? new MqttDefaultFilePersistence(persistenceDir) : new MemoryPersistence());
+            this.options = new MqttConnectOptions();
+            this.executor = Executors.newFixedThreadPool(4);
+            this.callbackExecutor = callbackExecutor != null ? callbackExecutor : Executors.newCachedThreadPool();
+
+            options.setAutomaticReconnect(true);
+            options.setCleanSession(true);
+            options.setConnectionTimeout(10);
+            options.setKeepAliveInterval(20);
+            options.setMaxInflight(100);
+
+            if (serverUri.startsWith("ssl://")) {
+                SSLSocketFactory socketFactory = getTrustAllSSLSocketFactory();
+                if (socketFactory != null) {
+                    options.setSocketFactory(socketFactory);
+                } else {
+                    Log.w(TAG, "Using default SSL socket factory");
+                }
+            }
+
+            client.setCallback(new MqttCallbackExtended() {
+                @Override
+                public void connectComplete(boolean reconnect, String serverURI) {
+                    Log.i(TAG, "Connected to MQTT broker: " + serverURI + ", reconnect: " + reconnect);
+                    if (onReconnectListener != null) callbackExecutor.execute(onReconnectListener);
+                    if (reconnect) resubscribeAll();
+                }
+
+                @Override
+                public void connectionLost(Throwable cause) {
+                    Log.w(TAG, "Connection lost", cause);
+                }
+
+                @Override
+                public void messageArrived(String topic, MqttMessage message) {
+                    final String payload = new String(message.getPayload());
+                    Log.d(TAG, "Message arrived on topic " + topic + ": " + payload);
+                    callbackExecutor.execute(() -> {
+                        try {
+                            MessageListener listener = topicListeners.get(topic);
+                            if (listener != null) listener.onMessage(topic, payload);
+                            if (globalListener != null) globalListener.onMessage(topic, payload);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error in message callback", e);
+                        }
+                    });
+                }
+
+                @Override
+                public void deliveryComplete(IMqttDeliveryToken token) {
+                    Log.d(TAG, "Delivery complete for message");
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing JavaMQTT", e);
+            throw e;
         }
-
-        client.setCallback(new MqttCallbackExtended() {
-            @Override
-            public void connectComplete(boolean reconnect, String serverURI) {
-                Log.i(TAG, "Connected to MQTT broker: " + serverURI + ", reconnect: " + reconnect);
-                if (onReconnectListener != null) callbackExecutor.execute(onReconnectListener);
-                if (reconnect) resubscribeAll();
-            }
-
-            @Override
-            public void connectionLost(Throwable cause) {
-                Log.w(TAG, "Connection lost", cause);
-            }
-
-            @Override
-            public void messageArrived(String topic, MqttMessage message) {
-                final String payload = new String(message.getPayload());
-                Log.d(TAG, "Message arrived on topic " + topic + ": " + payload);
-                callbackExecutor.execute(() -> {
-                    try {
-                        MessageListener listener = topicListeners.get(topic);
-                        if (listener != null) listener.onMessage(topic, payload);
-                        if (globalListener != null) globalListener.onMessage(topic, payload);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error in message callback", e);
-                    }
-                });
-            }
-
-            @Override
-            public void deliveryComplete(IMqttDeliveryToken token) {
-                Log.d(TAG, "Delivery complete for message");
-            }
-        });
     }
 
     public void connect(String username, String password, ConnectionListener listener) {
