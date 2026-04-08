@@ -53,6 +53,17 @@ public class MainActivity extends Activity {
         
         Log.d(TAG, "onCreate: startCount=" + startCount);
         
+        // Always show the main activity
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            isWaitingForPermission = true;
+            requestOverlayPermission();
+            return;
+        }
+        
+        initializeFirstRun();
+        
+        // Commented out the code that hides the activity on subsequent launches
+        /*
         if (startCount == 0) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
                 isWaitingForPermission = true;
@@ -66,6 +77,7 @@ public class MainActivity extends Activity {
             startServerService();
             finish();
         }
+        */
     }
     
     private void requestOverlayPermission() {
