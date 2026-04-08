@@ -330,16 +330,26 @@ public class ServerService extends Service {
                 if (mqttManager != null) {
                     mqttManager.disconnect();
                     mqttManager.setConfig(config);
-                    mqttManager.connect();
+                    if (mqttManager.isInitialized()) {
+                        mqttManager.connect();
+                    } else {
+                        Log.e(TAG, "Failed to reinitialize MQTT manager, cannot connect");
+                    }
                 } else {
-                    mqttManager = new MqttManager(this, config);
-                    initMqtt();
+                    try {
+                        mqttManager = new MqttManager(this, config);
+                        initMqtt();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to create MQTT manager", e);
+                    }
                 }
             }
             
             if (intent.hasExtra("reconnect")) {
-                if (mqttManager != null && !mqttManager.isConnected()) {
+                if (mqttManager != null && mqttManager.isInitialized() && !mqttManager.isConnected()) {
                     mqttManager.connect();
+                } else if (mqttManager != null && !mqttManager.isInitialized()) {
+                    Log.e(TAG, "MQTT manager not initialized, cannot reconnect");
                 }
             }
         }
