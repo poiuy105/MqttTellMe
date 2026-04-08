@@ -24,6 +24,8 @@ import android.widget.TextView;
 import android.widget.EditText;
 import android.widget.Toast;
 
+import java.util.Locale;
+
 public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
     private static final int REQUEST_CODE_OVERLAY_PERMISSION = 1001;
@@ -47,6 +49,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        
+        // Set default locale to English to avoid MissingResourceException in Paho MQTT
+        Locale.setDefault(Locale.ENGLISH);
         
         SharedPreferences prefs = getSharedPreferences("ServerPrefs", MODE_PRIVATE);
         int startCount = prefs.getInt("startCount", 0);

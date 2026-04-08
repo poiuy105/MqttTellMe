@@ -1,5 +1,6 @@
 package com.example.server;
 
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -68,6 +69,9 @@ public class ServerService extends Service {
     public void onCreate() {
         super.onCreate();
         Log.d(TAG, "Service created");
+        
+        // Set default locale to English to avoid MissingResourceException in Paho MQTT
+        Locale.setDefault(Locale.ENGLISH);
         
         mainHandler = new Handler(Looper.getMainLooper());
         
