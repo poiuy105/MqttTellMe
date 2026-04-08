@@ -3,8 +3,6 @@ package io.github.initio;
 import org.eclipse.paho.client.mqttv3.*;
 import org.eclipse.paho.client.mqttv3.persist.MqttDefaultFilePersistence;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
@@ -15,9 +13,11 @@ import java.security.cert.X509Certificate;
 import java.util.Map;
 import java.util.concurrent.*;
 
+import android.util.Log;
+
 public class JavaMQTT {
 
-    private static final Logger logger = LoggerFactory.getLogger(JavaMQTT.class);
+    private static final String TAG = "JavaMQTT";
 
     private final MqttAsyncClient client;
     private final MqttConnectOptions options;
@@ -60,34 +60,34 @@ public class JavaMQTT {
         client.setCallback(new MqttCallbackExtended() {
             @Override
             public void connectComplete(boolean reconnect, String serverURI) {
-                logger.info("Connected to MQTT broker: {}, reconnect: {}", serverURI, reconnect);
+                Log.i(TAG, "Connected to MQTT broker: " + serverURI + ", reconnect: " + reconnect);
                 if (onReconnectListener != null) callbackExecutor.execute(onReconnectListener);
                 if (reconnect) resubscribeAll();
             }
 
             @Override
             public void connectionLost(Throwable cause) {
-                logger.warn("Connection lost", cause);
+                Log.w(TAG, "Connection lost", cause);
             }
 
             @Override
             public void messageArrived(String topic, MqttMessage message) {
                 final String payload = new String(message.getPayload());
-                logger.debug("Message arrived on topic {}: {}", topic, payload);
+                Log.d(TAG, "Message arrived on topic " + topic + ": " + payload);
                 callbackExecutor.execute(() -> {
                     try {
                         MessageListener listener = topicListeners.get(topic);
                         if (listener != null) listener.onMessage(topic, payload);
                         if (globalListener != null) globalListener.onMessage(topic, payload);
                     } catch (Exception e) {
-                        logger.error("Error in message callback", e);
+                        Log.e(TAG, "Error in message callback", e);
                     }
                 });
             }
 
             @Override
             public void deliveryComplete(IMqttDeliveryToken token) {
-                logger.debug("Delivery complete for message");
+                Log.d(TAG, "Delivery complete for message");
             }
         });
     }
@@ -105,20 +105,20 @@ public class JavaMQTT {
                 client.connect(options, null, new IMqttActionListener() {
                     @Override
                     public void onSuccess(IMqttToken asyncActionToken) {
-                        logger.info("MQTT connect success");
+                        Log.i(TAG, "MQTT connect success");
                         isConnecting = false;
                         if (listener != null) callbackExecutor.execute(listener::onSuccess);
                     }
 
                     @Override
                     public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                        logger.error("Connect exception", exception);
+                        Log.e(TAG, "Connect exception", exception);
                         isConnecting = false;
                         if (listener != null) callbackExecutor.execute(() -> listener.onFailure(exception));
                     }
                 });
             } catch (MqttException e) {
-                logger.error("Immediate connect failure", e);
+                Log.e(TAG, "Immediate connect failure", e);
                 isConnecting = false;
                 if (listener != null) callbackExecutor.execute(() -> listener.onFailure(e));
             }
@@ -133,12 +133,12 @@ public class JavaMQTT {
                     message.setQos(qos);
                     message.setRetained(retain);
                     client.publish(topic, message);
-                    logger.debug("Published to {}: {}", topic, value);
+                    Log.d(TAG, "Published to " + topic + ": " + value);
                 } else {
-                    logger.warn("Publish failed, client not connected");
+                    Log.w(TAG, "Publish failed, client not connected");
                 }
             } catch (MqttException e) {
-                logger.error("Publish exception", e);
+                Log.e(TAG, "Publish exception", e);
             }
         });
     }
@@ -157,12 +157,12 @@ public class JavaMQTT {
                 if (client.isConnected()) {
                     client.subscribe(topic, qos);
                     topicListeners.put(topic, listener);
-                    logger.info("Subscribed to topic: {} with QoS {}", topic, qos);
+                    Log.i(TAG, "Subscribed to topic: " + topic + " with QoS " + qos);
                 } else {
-                    logger.warn("Subscribe failed, client not connected");
+                    Log.w(TAG, "Subscribe failed, client not connected");
                 }
             } catch (MqttException e) {
-                logger.error("Subscribe exception", e);
+                Log.e(TAG, "Subscribe exception", e);
             }
         });
     }
@@ -177,10 +177,10 @@ public class JavaMQTT {
                 if (client.isConnected()) {
                     client.unsubscribe(topic);
                     topicListeners.remove(topic);
-                    logger.info("Unsubscribed from topic: {}", topic);
+                    Log.i(TAG, "Unsubscribed from topic: " + topic);
                 }
             } catch (MqttException e) {
-                logger.error("Unsubscribe exception", e);
+                Log.e(TAG, "Unsubscribe exception", e);
             }
         });
     }
@@ -197,9 +197,9 @@ public class JavaMQTT {
         for (Map.Entry<String, MessageListener> entry : topicListeners.entrySet()) {
             try {
                 client.subscribe(entry.getKey(), qos);
-                logger.info("Resubscribed to topic: {}", entry.getKey());
+                Log.i(TAG, "Resubscribed to topic: " + entry.getKey());
             } catch (MqttException e) {
-                logger.error("Failed to resubscribe to topic: {}", entry.getKey(), e);
+                Log.e(TAG, "Failed to resubscribe to topic: " + entry.getKey(), e);
             }
         }
     }
@@ -213,10 +213,10 @@ public class JavaMQTT {
             try {
                 if (client.isConnected()) {
                     client.disconnect();
-                    logger.info("Disconnected from MQTT broker");
+                    Log.i(TAG, "Disconnected from MQTT broker");
                 }
             } catch (MqttException e) {
-                logger.error("Disconnect exception", e);
+                Log.e(TAG, "Disconnect exception", e);
             }
         });
     }
@@ -225,7 +225,7 @@ public class JavaMQTT {
         if (qos >= 0 && qos <= 2) {
             this.qos = qos;
         } else {
-            logger.warn("Invalid QoS level: {}", qos);
+            Log.w(TAG, "Invalid QoS level: " + qos);
         }
     }
 
@@ -237,9 +237,9 @@ public class JavaMQTT {
             if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
                 executor.shutdownNow();
             }
-            logger.info("JavaMQTT resources cleaned up");
+            Log.i(TAG, "JavaMQTT resources cleaned up");
         } catch (MqttException | InterruptedException e) {
-            logger.error("Error during cleanup", e);
+            Log.e(TAG, "Error during cleanup", e);
         }
     }
 
